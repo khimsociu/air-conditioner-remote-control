@@ -17,7 +17,6 @@ An IoT universal air conditioner (AC) remote control project built on **Platform
 * **IR Transmitter Module:** 940nm Infrared LED (paired with a Transistor driver circuit such as 2N2222/S8050 for extended transmission range).
 * **IR Receiver Module:** 38kHz Infrared Receiver (VS1838B / TSOP4838) *(used for learning commands from original remotes)*.
 * **Display:** I2C OLED Display (SSD1306 / SH1106).
-* **Expansion Module (Optional):** UART GPS Module (NEO-6M / NEO-8M).
 
 ## 🔌 Pinout Configuration
 
