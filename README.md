@@ -28,7 +28,6 @@ An IoT universal air conditioner (AC) remote control project built on **Platform
 | **IR Transmitter LED** | Signal (Data) | `GPIO 4` *(Update per code)* | Recommended to drive via Transistor |
 | **IR Receiver** | OUT | `GPIO 5` *(Update per code)* | 3.3V Power Supply |
 | **OLED Display** | SDA / SCL | `GPIO 8` / `GPIO 9` *(I2C)* | Default I2C interface |
-| **GPS Module** | TX / RX | `GPIO 17` / `GPIO 18` *(UART)* | Optional |
 
 ## 📚 Libraries Used (PlatformIO)
 
@@ -37,7 +36,6 @@ This project is built on the Arduino Framework using PlatformIO with the followi
 * [`IRremoteESP8266`](https://github.com/crankyoldgit/IRremoteESP8266) - Infrared signal decoding and transmission for AC units.
 * [`U8g2`](https://github.com/olikraus/u8g2) - Monochrome graphics library for OLED/LCD displays.
 * [`PubSubClient`](https://github.com/knolleary/pubsubclient) - MQTT client messaging.
-* [`TinyGPSPlus`](https://github.com/mikalhart/TinyGPSPlus) - NMEA data parsing for GPS modules.
 * `WebServer`, `Preferences`, `FS` - Built-in ESP32 Arduino Core libraries.
 
 ## 🚀 Installation & Flashing Guide
