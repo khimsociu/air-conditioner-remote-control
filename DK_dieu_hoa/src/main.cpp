@@ -24,7 +24,6 @@ const uint16_t PIN_ENC_A    = 2;  // encoder CLK
 const uint16_t PIN_ENC_B    = 3;  // encoder DT
 const uint16_t PIN_ENC_SW   = 10; // encoder SW (nút bấm)
 
-
 DtgWiFi dtg(PROJECT_ID, GW_ALIAS, MQTT_USER, MQTT_PASS, CLIENT_ID);
 
 DTG_CONNECTED()
@@ -703,6 +702,7 @@ int viTriProto(const char* ds, decode_type_t t) {
 // Mỗi hãng một dòng trong danh sách (các biến thể protocol của hãng được xử lý tự động)
 void buildBrandList() {
   nBrands = 0;
+  themHang("[Do tu remote]", "#do");   // mục đặc biệt: đo hãng từ remote gốc
   for (auto &g : GROUPS) {
     String names = g[1];
     int start = 0;
@@ -752,9 +752,17 @@ void chonHang(int i) {
 }
 
 // ---------- Trạng thái giao diện ----------
-enum Man { UI_HOME, UI_HANG };
+enum Man { UI_HOME, UI_HANG, UI_DO };
 Man man = UI_HOME;
 int      hangIdx = 0;
+// ----- Chế độ đo hãng từ remote -----
+uint32_t doStart = 0;            // thời điểm vào chế độ đo
+bool     doCo = false;           // đã nhận được 1 tín hiệu
+char     doProto[16] = "";       // tên protocol đo được
+char     doHangTxt[2][22] = {"", ""};   // tối đa 2 dòng tên hãng
+int      doIdx = -1;             // vị trí hãng trong danh sách để chọn nhanh
+uint16_t doBits = 0;
+const uint32_t DO_TIMEOUT_MS = 30000;
 uint32_t lastInput = 0, lastDraw = 0;
 
 // Thứ tự trùng mã swingv trên Hub: 0 Off, 1 Auto, 2 Low, 3 Mid, 4 High
@@ -822,10 +830,38 @@ void veHome() {
   u8g2.drawStr(76, 63, b);
 }
 
+void veDo() {
+  u8g2.setFont(u8g2_font_6x12_tf);
+  u8g2.drawStr(0, 10, "DO HANG REMOTE");
+  char b[28];
+  int giay = (int)((DO_TIMEOUT_MS - (millis() - doStart)) / 1000);
+  if (giay < 0) giay = 0;
+  snprintf(b, sizeof(b), "%ds", giay);
+  u8g2.drawStr(110, 10, b);
+  if (!doCo) {
+    u8g2.drawStr(0, 28, "Huong remote vao mat");
+    u8g2.drawStr(0, 40, "thu IR (GPIO4) va");
+    u8g2.drawStr(0, 52, "bam 1 nut bat ky");
+    u8g2.drawStr(0, 63, "Giu nut: thoat");
+    return;
+  }
+  snprintf(b, sizeof(b), "Proto: %s", doProto);
+  u8g2.drawStr(0, 24, b);
+  if (doHangTxt[0][0]) {
+    u8g2.drawStr(0, 36, doHangTxt[0]);
+    if (doHangTxt[1][0]) u8g2.drawStr(0, 48, doHangTxt[1]);
+    u8g2.drawStr(0, 63, doIdx >= 0 ? "Bam: chon | Giu: thoat" : "Giu nut: thoat");
+  } else {
+    u8g2.drawStr(0, 36, "Khong co trong ds");
+    u8g2.drawStr(0, 63, "Giu nut: thoat");
+  }
+}
+
 void veMan() {
   u8g2.clearBuffer();
-  if (man == UI_HANG) veHang();
-  else                veHome();
+  if (man == UI_HANG)    veHang();
+  else if (man == UI_DO) veDo();
+  else                   veHome();
   u8g2.sendBuffer();
 }
 
@@ -866,6 +902,10 @@ uint32_t chuKy() {
   h = h * 31 + (uint32_t)(activeIdx + 1);
   h = h * 31 + (uint32_t)ac.next.protocol;
   h = h * 31 + (uint32_t)hangIdx;
+  if (man == UI_DO) {
+    h = h * 31 + (uint32_t)((millis() - doStart) / 1000);
+    h = h * 31 + (doCo ? 1 : 0) + (uint32_t)doBits * 7 + (uint32_t)(doIdx + 2);
+  }
   return h;
 }
 
@@ -877,6 +917,7 @@ void uiLoop() {
 
   // Lâu không thao tác thì về màn hình chính
   if (man == UI_HANG && now - lastInput > 20000) man = UI_HOME;
+  if (man == UI_DO && (now - doStart > DO_TIMEOUT_MS)) man = UI_HOME;
 
   if (man == UI_HOME) {
     // Xoay hoặc bấm: mở danh sách hãng
@@ -885,13 +926,22 @@ void uiLoop() {
       hangIdx = viTriHangHienTai();
       if (d != 0) hangIdx = ((hangIdx + d) % nBrands + nBrands) % nBrands;
     }
+  } else if (man == UI_DO) {
+    if (nut == NUT_DAI) man = UI_HOME;
+    else if (nut == NUT_NGAN && doCo && doIdx >= 0) { chonHang(doIdx); man = UI_HOME; }
+    else if (d != 0 || nut == NUT_NGAN) doStart = now;   // thao tác thì gia hạn thời gian chờ
   } else {   // UI_HANG
     if (d != 0 && nBrands > 0) hangIdx = ((hangIdx + d) % nBrands + nBrands) % nBrands;
     if (nut == NUT_DAI) {
       man = UI_HOME;
     } else if (nut == NUT_NGAN && nBrands > 0) {
-      chonHang(hangIdx);
-      man = UI_HOME;
+      if (brands[hangIdx].arg[0] == '#') {   // "[Do tu remote]"
+        man = UI_DO; doStart = now; doCo = false; doProto[0] = 0;
+        doHangTxt[0][0] = doHangTxt[1][0] = 0; doIdx = -1; doBits = 0;
+      } else {
+        chonHang(hangIdx);
+        man = UI_HOME;
+      }
     }
   }
 
@@ -962,6 +1012,32 @@ void ketNoiWifiTruoc() {
   }
 }
 
+// Tra bảng GROUPS: protocol đo được thuộc những hãng nào (tối đa 2 dòng hiển thị)
+void hangTuRemote(decode_type_t t) {
+  doHangTxt[0][0] = doHangTxt[1][0] = 0;
+  doIdx = -1;
+  String dong[2] = {"", ""};
+  for (auto &g : GROUPS) {
+    if (viTriProto(g[0], t) < 0) continue;
+    String first = g[1];
+    int c = first.indexOf(',');
+    if (c > 0) first = first.substring(0, c);
+    if (doIdx < 0) {
+      for (int i = 0; i < nBrands; i++) if (first.equals(brands[i].arg)) { doIdx = i; break; }
+    }
+    // Gom tên vào 2 dòng, mỗi dòng tối đa 20 ký tự
+    for (int k = 0; k < 2; k++) {
+      if (dong[k].length() + first.length() + (dong[k].length() ? 1 : 0) <= 20) {
+        if (dong[k].length()) dong[k] += ",";
+        dong[k] += first;
+        break;
+      }
+    }
+  }
+  strlcpy(doHangTxt[0], dong[0].c_str(), sizeof(doHangTxt[0]));
+  strlcpy(doHangTxt[1], dong[1].c_str(), sizeof(doHangTxt[1]));
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -994,6 +1070,18 @@ void loop() {
   // Lệnh từ Hub và hẹn giờ
   xuLyHubCmd();
   kiemTraHen();
+
+  // Cập nhật thời gian hẹn giờ còn lại lên Hub mỗi khi đổi phút (mỗi 1 phút)
+  {
+    static int lastOff = -1, lastOn = -1;
+    int po = phutConLai(henTat), pn = phutConLai(henBat);
+    if (ketNoi && ac.next.protocol != decode_type_t::UNKNOWN) {
+      if (po != lastOff) dtg.publish("timer_off", po);
+      if (pn != lastOn)  dtg.publish("timer_on",  pn);
+    }
+    if (ketNoi || (po == 0 && pn == 0)) { lastOff = po; lastOn = pn; }
+  }
+
   uiLoop();   // núm xoay + màn hình OLED
 
   // Nhận tín hiệu từ remote gốc và đồng bộ trạng thái
@@ -1008,7 +1096,24 @@ void loop() {
     if (results.decode_type == decode_type_t::UNKNOWN) Serial.print(resultToSourceCode(&results));
 
     stdAc::state_t st;
-    if (activeIdx >= 0 && IRAcUtils::decodeToState(&results, &st)) {
+    bool giaiMa = IRAcUtils::decodeToState(&results, &st);
+
+    if (man == UI_DO) {
+      // Chế độ đo hãng: chỉ nhận dạng, KHÔNG đồng bộ trạng thái
+      if (results.decode_type != decode_type_t::UNKNOWN) {
+        strlcpy(doProto, typeToString(results.decode_type).c_str(), sizeof(doProto));
+        doBits = results.bits;
+        hangTuRemote(results.decode_type);
+        Serial.printf("(do hang) protocol=%s, %u bit\n", doProto, (unsigned)results.bits);
+      } else {
+        strlcpy(doProto, "UNKNOWN", sizeof(doProto));
+        doBits = results.bits;
+        doHangTxt[0][0] = doHangTxt[1][0] = 0;
+        doIdx = -1;
+      }
+      doCo = true;
+      doStart = millis();   // nhận được thì gia hạn thời gian chờ
+    } else if (activeIdx >= 0 && giaiMa) {
       const char* ds = nhomProto(String(profiles[activeIdx].name));
       bool cungHang = (st.protocol == ac.next.protocol) ||
                       (ds != nullptr && viTriProto(ds, st.protocol) >= 0);
