@@ -262,6 +262,14 @@ void dayLenIoT() {
   dtg.publish("sleep",     ac.next.sleep >= 0 ? 1 : 0);
   dtg.publish("timer_off", phutConLai(henTat));
   dtg.publish("timer_on",  phutConLai(henBat));
+
+  // Tên hãng + protocol đang dùng (dạng chuỗi). Trên Hub cần tạo 2 datastream kiểu text: "brand" và "protocol"
+  char js[64];
+  const char* ten = (activeIdx >= 0) ? profiles[activeIdx].name : "";
+  snprintf(js, sizeof(js), "{\"v\":\"%s\"}", ten);
+  dtg.publishJson("brand", js);
+  snprintf(js, sizeof(js), "{\"v\":\"%s\"}", typeToString(ac.next.protocol).c_str());
+  dtg.publishJson("protocol", js);
 }
 
 // ---------- Lưu / nạp ----------
@@ -762,6 +770,7 @@ char     doProto[16] = "";       // tên protocol đo được
 char     doHangTxt[2][22] = {"", ""};   // tối đa 2 dòng tên hãng
 int      doIdx = -1;             // vị trí hãng trong danh sách để chọn nhanh
 uint16_t doBits = 0;
+int16_t  doProtoT = -1, doModel = -1;   // protocol/model đo được (để chọn đúng biến thể)
 const uint32_t DO_TIMEOUT_MS = 30000;
 uint32_t lastInput = 0, lastDraw = 0;
 
@@ -797,6 +806,14 @@ void veHome() {
     u8g2.drawStr(0, 40, "Bam nut de chon hang");
     return;
   }
+  // Máy đang TẮT: chỉ hiện chữ OFF to ở giữa màn hình, không hiện gì khác
+  if (!ac.next.power) {
+    u8g2.setFont(u8g2_font_logisoso28_tr);
+    int w = u8g2.getStrWidth("OFF");
+    u8g2.drawStr((128 - w) / 2, 46, "OFF");
+    return;
+  }
+
   const char* ten = (activeIdx >= 0) ? profiles[activeIdx].name : "(chua luu)";
   u8g2.drawStr(0, 10, ten);
   u8g2.drawStr(ac.next.power ? 110 : 104, 10, ac.next.power ? "ON" : "OFF");
@@ -804,6 +821,7 @@ void veHome() {
   else                 u8g2.drawCircle(98, 6, 2);    // chấm rỗng = chưa nối
 
   char b[24];
+
   u8g2.setFont(u8g2_font_logisoso28_tn);
   int nguyen = (int)ac.next.degrees;
   bool nua = (ac.next.degrees - nguyen) >= 0.25f;   // có phần lẻ 0,5
@@ -928,7 +946,16 @@ void uiLoop() {
     }
   } else if (man == UI_DO) {
     if (nut == NUT_DAI) man = UI_HOME;
-    else if (nut == NUT_NGAN && doCo && doIdx >= 0) { chonHang(doIdx); man = UI_HOME; }
+    else if (nut == NUT_NGAN && doCo && doIdx >= 0) { chonHang(doIdx);
+      if (activeIdx >= 0 && doProtoT > 0) {   // ép đúng biến thể protocol/model đo được, không dùng biến thể mặc định của hãng
+        profiles[activeIdx].proto = doProtoT;
+        profiles[activeIdx].model = doModel;
+        ac.next.protocol = (decode_type_t)doProtoT;
+        ac.next.model    = doModel;
+        luuTrangThai();
+        dayLenIoT();
+      }
+      man = UI_HOME; }
     else if (d != 0 || nut == NUT_NGAN) doStart = now;   // thao tác thì gia hạn thời gian chờ
   } else {   // UI_HANG
     if (d != 0 && nBrands > 0) hangIdx = ((hangIdx + d) % nBrands + nBrands) % nBrands;
@@ -937,7 +964,7 @@ void uiLoop() {
     } else if (nut == NUT_NGAN && nBrands > 0) {
       if (brands[hangIdx].arg[0] == '#') {   // "[Do tu remote]"
         man = UI_DO; doStart = now; doCo = false; doProto[0] = 0;
-        doHangTxt[0][0] = doHangTxt[1][0] = 0; doIdx = -1; doBits = 0;
+        doHangTxt[0][0] = doHangTxt[1][0] = 0; doIdx = -1; doBits = 0; doProtoT = -1; doModel = -1;
       } else {
         chonHang(hangIdx);
         man = UI_HOME;
@@ -1103,10 +1130,13 @@ void loop() {
       if (results.decode_type != decode_type_t::UNKNOWN) {
         strlcpy(doProto, typeToString(results.decode_type).c_str(), sizeof(doProto));
         doBits = results.bits;
+        doProtoT = (int16_t)results.decode_type;
+        doModel = giaiMa ? (int16_t)st.model : -1;
         hangTuRemote(results.decode_type);
         Serial.printf("(do hang) protocol=%s, %u bit\n", doProto, (unsigned)results.bits);
       } else {
         strlcpy(doProto, "UNKNOWN", sizeof(doProto));
+        doProtoT = -1;
         doBits = results.bits;
         doHangTxt[0][0] = doHangTxt[1][0] = 0;
         doIdx = -1;
